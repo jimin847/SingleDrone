@@ -20,4 +20,7 @@ void UART_CMD_RxCpltCallback(UART_HandleTypeDef *huart);
 // stm32f1xx_it.c의 HAL_UART_ErrorCallback에서 호출될 함수 (선택 사항)
 void UART_CMD_ErrorCallback(UART_HandleTypeDef *huart);
 
+// uart_commands.h
+bool UART_IsUserTypingCommand(void);
+
 #endif /* INC_UART_COMMANDS_H_ */

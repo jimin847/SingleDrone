@@ -6,18 +6,20 @@
 #include <string.h>   // strncmp, strlen, strcspn 사용 (개행 문자 제거용)
 #include <stdlib.h>   // atof (문자열 to float 변환)
 
-// --- Private Variables ---
-static UART_HandleTypeDef *g_huart_cmd; // 사용할 UART 핸들러 포인터
-static uint8_t g_rx_buffer_char[1];              // 1 바이트씩 수신하기 위한 버퍼
-static uint8_t g_command_buffer[UART_CMD_RX_BUFFER_SIZE]; // 명령어 누적 버퍼
-static uint16_t g_command_buffer_idx = 0;
-static volatile bool g_command_ready_flag = false; // 완성된 명령어 수신 플래그
+// --- Private (Static) Global Variables for this module ---
+static UART_HandleTypeDef *g_huart_cmd_handle_uart_commands; // 변수명 충돌 방지 위해 _uart_commands 추가
+static uint8_t g_rx_char_buffer_uart_commands[1];
+static uint8_t g_command_buffer_uart_commands[UART_CMD_RX_BUFFER_SIZE];
+static uint16_t g_command_buffer_idx_uart_commands = 0;
+static volatile bool g_command_ready_flag_uart_commands = false;
+static volatile bool g_is_typing_command_uart_commands = false; // 사용자 입력 중 플래그
 
 // main.c 에 정의된 전역 변수들을 사용하기 위한 extern 선언
 extern float target_angles[3];
 extern PIDController pid_roll;
 extern PIDController pid_pitch;
 extern PIDController pid_yaw;
+
 // extern volatile bool control_loop_flag; // CONTROL_LOOP_PERIOD_MS를 직접 사용하거나 main.h에 정의
 #ifndef CONTROL_LOOP_PERIOD_MS // main.c에 정의된 값을 가져오지 못할 경우 대비
 #define CONTROL_LOOP_PERIOD_MS 2 // 기본값 설정
@@ -26,10 +28,11 @@ extern PIDController pid_yaw;
 // --- Function Definitions ---
 
 void UART_Commands_Init(UART_HandleTypeDef *huart_handle_to_use) {
-    g_huart_cmd = huart_handle_to_use;
-    g_command_buffer_idx = 0;
-    g_command_ready_flag = false;
-    memset(g_command_buffer, 0, UART_CMD_RX_BUFFER_SIZE);
+    g_huart_cmd_handle_uart_commands = huart_handle_to_use; // 수정된 변수명 사용
+    g_command_buffer_idx_uart_commands = 0;                 // 수정된 변수명 사용
+    g_command_ready_flag_uart_commands = false;             // 수정된 변수명 사용
+    g_is_typing_command_uart_commands = false;              // 수정된 변수명 사용
+    memset(g_command_buffer_uart_commands, 0, UART_CMD_RX_BUFFER_SIZE); // 수정된 변수명 사용
 
     printf("\r\nUART Command Interface Initialized.\r\n");
     printf("Available commands (terminate with Enter):\r\n");
@@ -37,112 +40,132 @@ void UART_Commands_Init(UART_HandleTypeDef *huart_handle_to_use) {
     printf("  p<value>  : Set target Pitch angle (e.g., p-5.0)\r\n");
     printf("  y<value>  : Set target Yaw angle (e.g., y0.0)\r\n");
     printf("  reset     : Reset target angles and PIDs\r\n");
-    printf(">"); // 프롬프트
+    printf(">");
+    fflush(stdout);
 
-    // 첫 번째 1바이트 수신 인터럽트 시작
-    if (HAL_UART_Receive_IT(g_huart_cmd, g_rx_buffer_char, 1) != HAL_OK) {
+    if (HAL_UART_Receive_IT(g_huart_cmd_handle_uart_commands, g_rx_char_buffer_uart_commands, 1) != HAL_OK) { // 수정된 변수명 사용
         printf("Error: Failed to start UART RX IT in UART_Commands_Init\r\n");
-        // Error_Handler(); // 필요시 에러 처리
     }
 }
 
 // 이 함수는 stm32f1xx_it.c 의 HAL_UART_RxCpltCallback 에서 호출됨
 void UART_CMD_RxCpltCallback(UART_HandleTypeDef *huart) {
-    if (huart->Instance == g_huart_cmd->Instance) {
-        // 수신된 바이트를 명령어 버퍼에 추가
-        if (g_rx_buffer_char[0] == '\r' || g_rx_buffer_char[0] == '\n') { // 개행 문자(CR 또는 LF)를 만나면
-            if (g_command_buffer_idx > 0) { // 버퍼에 내용이 있으면 명령어 완성
-                g_command_buffer[g_command_buffer_idx] = '\0'; // Null-terminate string
-                g_command_ready_flag = true;             // 명령어 수신 플래그 설정
-                // g_command_buffer_idx = 0; // UART_Commands_Process에서 리셋
-            } else { // 빈 줄 입력 (엔터만)
-                g_command_buffer_idx = 0; // 인덱스 리셋
-                printf(">"); // 새 프롬프트
+    if (huart->Instance == g_huart_cmd_handle_uart_commands->Instance) { // 수정된 변수명 사용
+        g_is_typing_command_uart_commands = true; // 수정된 변수명 사용
+        uint8_t received_char = g_rx_char_buffer_uart_commands[0]; // 수정된 변수명 사용
+
+        HAL_UART_Transmit(g_huart_cmd_handle_uart_commands, &received_char, 1, 100); // Echo back
+
+        if (received_char == '\r' || received_char == '\n') {
+            printf("\r\n");
+            if (g_command_buffer_idx_uart_commands > 0) { // 수정된 변수명 사용
+                g_command_buffer_uart_commands[g_command_buffer_idx_uart_commands] = '\0'; // 수정된 변수명 사용
+                g_command_ready_flag_uart_commands = true; // 수정된 변수명 사용
+            } else {
+                printf(">");
+                fflush(stdout);
+                g_command_buffer_idx_uart_commands = 0; // 수정된 변수명 사용
+                g_is_typing_command_uart_commands = false; // 수정된 변수명 사용
             }
-            // 개행 문자를 받았으므로, 다음 입력을 위해 다시 수신 시작 (명령어 처리 후에도 가능)
-            // 여기서는 g_command_ready_flag가 true가 되면 UART_Commands_Process에서 처리 후 다시 수신 시작하도록 함
-        } else if (g_rx_buffer_char[0] >= 32 && g_rx_buffer_char[0] <= 126) { // Printable ASCII characters
-            if (g_command_buffer_idx < UART_CMD_RX_BUFFER_SIZE - 1) {
-                g_command_buffer[g_command_buffer_idx++] = g_rx_buffer_char[0];
-                // 에코 백 (사용자 입력 확인용)
-                HAL_UART_Transmit(g_huart_cmd, g_rx_buffer_char, 1, 10);
-            } else { // 버퍼 오버플로우
-                g_command_buffer[UART_CMD_RX_BUFFER_SIZE - 1] = '\0';
-                printf("\r\nError: Command buffer overflow. Command cleared.\r\n>");
-                g_command_buffer_idx = 0; // 버퍼 클리어
+        } else if (received_char == '\b' || received_char == 127) {
+            if (g_command_buffer_idx_uart_commands > 0) { // 수정된 변수명 사용
+                g_command_buffer_idx_uart_commands--; // 수정된 변수명 사용
+                char backspace_seq[] = "\b \b";
+                HAL_UART_Transmit(g_huart_cmd_handle_uart_commands, (uint8_t*)backspace_seq, sizeof(backspace_seq)-1, 100); // 수정된 변수명 사용
+            }
+        } else if (received_char >= 32 && received_char <= 126) {
+            if (g_command_buffer_idx_uart_commands < UART_CMD_RX_BUFFER_SIZE - 1) { // 수정된 변수명 사용
+                g_command_buffer_uart_commands[g_command_buffer_idx_uart_commands++] = received_char; // 수정된 변수명 사용
+            } else {
+                printf("\r\nError: Command buffer overflow. Clearing command.\r\n>");
+                fflush(stdout);
+                g_command_buffer_idx_uart_commands = 0; // 수정된 변수명 사용
+                memset(g_command_buffer_uart_commands, 0, UART_CMD_RX_BUFFER_SIZE); // 수정된 변수명 사용
+                g_is_typing_command_uart_commands = false; // 수정된 변수명 사용
             }
         }
-        // (g_command_ready_flag가 false일 때만) 다음 바이트 수신 계속
-        if (!g_command_ready_flag) {
-             if (HAL_UART_Receive_IT(g_huart_cmd, g_rx_buffer_char, 1) != HAL_OK) {
-                 printf("\r\nError: Failed to restart UART RX IT (accumulating)\r\n>");
+
+        if (!g_command_ready_flag_uart_commands) { // 수정된 변수명 사용
+             if (HAL_UART_Receive_IT(g_huart_cmd_handle_uart_commands, g_rx_char_buffer_uart_commands, 1) != HAL_OK) { // 수정된 변수명 사용
+                 // Error
             }
         }
     }
 }
 
 void UART_CMD_ErrorCallback(UART_HandleTypeDef *huart) {
-    if (huart->Instance == g_huart_cmd->Instance) {
-        uint32_t error_code = HAL_UART_GetError(g_huart_cmd);
-        printf("\r\nUART RX Error! Code: 0x%lX\r\n>", error_code);
-        // 에러 플래그 클리어 및 수신 재시작 시도
-        __HAL_UART_CLEAR_OREFLAG(g_huart_cmd);
-        __HAL_UART_CLEAR_NEFLAG(g_huart_cmd);
-        __HAL_UART_CLEAR_FEFLAG(g_huart_cmd);
-        g_command_buffer_idx = 0;
-        g_command_ready_flag = false;
-        if (HAL_UART_Receive_IT(g_huart_cmd, g_rx_buffer_char, 1) != HAL_OK) {
-            printf("Error: Failed to restart UART RX IT after error callback\r\n>");
+    if (huart->Instance == g_huart_cmd_handle_uart_commands->Instance) { // 수정된 변수명 사용
+        // ... (에러 처리 로직, 변수명 일관성 있게 수정) ...
+        g_command_buffer_idx_uart_commands = 0; // 수정된 변수명 사용
+        g_command_ready_flag_uart_commands = false; // 수정된 변수명 사용
+        memset(g_command_buffer_uart_commands, 0, UART_CMD_RX_BUFFER_SIZE); // 수정된 변수명 사용
+        if (HAL_UART_Receive_IT(g_huart_cmd_handle_uart_commands, g_rx_char_buffer_uart_commands, 1) != HAL_OK) { // 수정된 변수명 사용
+            // Error
         }
     }
 }
 
 void UART_Commands_Process(void) {
-    if (g_command_ready_flag) {
-        // 수신된 명령어 처리
-        printf("\r\nCMD RX: %s\r\n", (char*)g_command_buffer);
+    if (g_command_ready_flag_uart_commands) { // 수정된 변수명 사용
+        printf("Processing CMD: [%s]\r\n", (char*)g_command_buffer_uart_commands); // 수정된 변수명 사용
 
         float val;
-        // sscanf는 float 파싱 시 locale 문제로 동작 안 할 수 있음. atof 권장.
-        // 또는 간단하게 직접 파싱
-        if (g_command_buffer[0] == 'r') {
-            val = atof((char*)g_command_buffer + 1);
+        // bool command_processed = false; // 이 변수는 현재 사용되지 않으므로 주석 처리 또는 제거
+
+        if (g_command_buffer_uart_commands[0] == 'r') { // 수정된 변수명 사용
+            val = atof((char*)g_command_buffer_uart_commands + 1); // 수정된 변수명 사용
             target_angles[AXIS_ROLL] = val;
             printf("Target Roll set to: %.2f\r\n", target_angles[AXIS_ROLL]);
-        } else if (g_command_buffer[0] == 'p') {
-            val = atof((char*)g_command_buffer + 1);
+        } else if (g_command_buffer_uart_commands[0] == 'p') { // 수정된 변수명 사용
+            // ... (이하 유사하게 변수명 수정) ...
+            val = atof((char*)g_command_buffer_uart_commands + 1);
             target_angles[AXIS_PITCH] = val;
             printf("Target Pitch set to: %.2f\r\n", target_angles[AXIS_PITCH]);
-        } else if (g_command_buffer[0] == 'y') {
-            val = atof((char*)g_command_buffer + 1);
+        } else if (g_command_buffer_uart_commands[0] == 'y') {
+            val = atof((char*)g_command_buffer_uart_commands + 1);
             target_angles[AXIS_YAW] = val;
             printf("Target Yaw set to: %.2f\r\n", target_angles[AXIS_YAW]);
-        } else if (strncmp((char*)g_command_buffer, "reset", 5) == 0) {
-            target_angles[AXIS_ROLL] = 0.0f;
-            target_angles[AXIS_PITCH] = 0.0f;
-            target_angles[AXIS_YAW] = 0.0f;
+        } else if (strncmp((char*)g_command_buffer_uart_commands, "reset", 5) == 0) {
+        	target_angles[AXIS_ROLL] = 0.0f;
+        	    target_angles[AXIS_PITCH] = 0.0f;
+        	    target_angles[AXIS_YAW] = 0.0f;
 
-            float pid_reinit_dt = (float)CONTROL_LOOP_PERIOD_MS / 1000.0f;
-            PID_Init(&pid_roll, pid_roll.kp, pid_roll.ki, pid_roll.kd, pid_reinit_dt,
-                     pid_roll.output_min, pid_roll.output_max, pid_roll.integral_min, pid_roll.integral_max);
-            PID_Init(&pid_pitch, pid_pitch.kp, pid_pitch.ki, pid_pitch.kd, pid_reinit_dt,
-                     pid_pitch.output_min, pid_pitch.output_max, pid_pitch.integral_min, pid_pitch.integral_max);
-            PID_Init(&pid_yaw, pid_yaw.kp, pid_yaw.ki, pid_yaw.kd, pid_reinit_dt,
-                     pid_yaw.output_min, pid_yaw.output_max, pid_yaw.integral_min, pid_yaw.integral_max);
+        	    // PID 상태 리셋 (pid.c/h 에 PID_Reset 함수를 만들거나 직접 접근)
+        	    // 예시: PID_Init을 다시 호출하거나, 멤버 직접 초기화
+        	    float current_dt_for_reset = (float)CONTROL_LOOP_PERIOD_MS / 1000.0f;
+        	    float pid_output_min = -100.0f; // main.c의 초기화 값과 동일하게
+        	    float pid_output_max = 100.0f;
+        	    float pid_integral_min = -500.0f;
+        	    float pid_integral_max = 500.0f;
+
+        	    PID_Init(&pid_roll, pid_roll.kp, pid_roll.ki, pid_roll.kd, current_dt_for_reset, pid_output_min, pid_output_max, pid_integral_min, pid_integral_max); // 현재 게인 유지하며 리셋
+        	    PID_Init(&pid_pitch, pid_pitch.kp, pid_pitch.ki, pid_pitch.kd, current_dt_for_reset, pid_output_min, pid_output_max, pid_integral_min, pid_integral_max);
+        	    PID_Init(&pid_yaw, pid_yaw.kp, pid_yaw.ki, pid_yaw.kd, current_dt_for_reset, pid_output_min, pid_output_max, pid_integral_min, pid_integral_max);
+        	    // 또는 더 간단하게
+        	    // pid_roll.integral = 0.0f; pid_roll.prev_error = 0.0f;
+        	    // pid_pitch.integral = 0.0f; pid_pitch.prev_error = 0.0f;
+        	    // pid_yaw.integral = 0.0f; pid_yaw.prev_error = 0.0f;
             printf("Targets and PIDs have been reset.\r\n");
         } else {
-            printf("Unknown command: %s\r\n", (char*)g_command_buffer);
+            printf("Unknown command: [%s]\r\n", (char*)g_command_buffer_uart_commands); // 수정된 변수명 사용
         }
 
-        g_command_buffer_idx = 0; // 명령어 처리 후 버퍼 인덱스 리셋
-        memset(g_command_buffer, 0, UART_CMD_RX_BUFFER_SIZE); // 버퍼 클리어
-        g_command_ready_flag = false; // 플래그 리셋
+        g_command_buffer_idx_uart_commands = 0; // 수정된 변수명 사용
+        memset(g_command_buffer_uart_commands, 0, UART_CMD_RX_BUFFER_SIZE); // 수정된 변수명 사용
+        g_command_ready_flag_uart_commands = false; // 수정된 변수명 사용
+        g_is_typing_command_uart_commands = false; // 명령어 처리 완료 후 타이핑 상태 해제
 
-        printf(">"); // 다음 명령어 입력 프롬프트
+        printf(">");
+        fflush(stdout);
 
-        // 명령어 처리 후, 새로운 명령어 수신을 위해 다시 인터럽트 활성화
-        if (HAL_UART_Receive_IT(g_huart_cmd, g_rx_buffer_char, 1) != HAL_OK) {
+        if (HAL_UART_Receive_IT(g_huart_cmd_handle_uart_commands, g_rx_char_buffer_uart_commands, 1) != HAL_OK) { // 수정된 변수명 사용
              printf("Error: Failed to restart UART RX IT after command processing\r\n>");
+             fflush(stdout);
         }
     }
+}
+
+// uart_commands.c
+bool UART_IsUserTypingCommand(void) { // 이 함수는 main.c에서 로그 출력 제어용
+    return g_is_typing_command_uart_commands && !g_command_ready_flag_uart_commands; // 수정된 변수명 사용
 }

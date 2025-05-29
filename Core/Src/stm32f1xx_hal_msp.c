@@ -109,7 +109,9 @@ void HAL_UART_MspInit(UART_HandleTypeDef* huart)
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
     /* USER CODE BEGIN USART2_MspInit 1 */
-
+    /* USART2 interrupt Init */ // <--- 이 부분을 추가합니다.
+        HAL_NVIC_SetPriority(USART2_IRQn, 0, 0); // 우선순위는 필요에 따라 조절
+        HAL_NVIC_EnableIRQ(USART2_IRQn);
     /* USER CODE END USART2_MspInit 1 */
 
   }
